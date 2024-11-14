@@ -5,8 +5,32 @@ import "./style.css";
 import "./leafletWorkaround.ts";
 import luck from "./luck.ts";
 
-// oakes classroom reference
-const OAKES_CLASSROOM = leaflet.latLng(36.98949379578401, -122.06277128548504);
+// coordinate conversion function
+function toGridCell(
+  latitude: number,
+  longitude: number,
+): { i: number; j: number } {
+  const latFactor = Math.round(latitude * 1e4);
+  const lngFactor = Math.round(longitude * 1e4);
+  return { i: latFactor, j: lngFactor };
+}
+
+class Cell {
+  constructor(public latitude: number, public longitude: number) {}
+}
+
+// flyweight pattern for cells
+class CellFactory {
+  private static cells = new Map<string, Cell>();
+
+  public static getCell(latitude: number, longitude: number): Cell {
+    const key = `${latitude},${longitude}`;
+    if (!CellFactory.cells.has(key)) {
+      CellFactory.cells.set(key, new Cell(latitude, longitude));
+    }
+    return CellFactory.cells.get(key)!;
+  }
+}
 
 // game parameters
 const GAMEPLAY_ZOOM_LEVEL = 19;
@@ -16,9 +40,20 @@ const CACHE_SPAWN_PROBABILITY = 0.1;
 
 // wait for the DOM to load before initializing the map
 document.addEventListener("DOMContentLoaded", () => {
-  // create id map reference
+  // Convert the center position to grid cells (log this info)
+  const centerGrid = toGridCell(36.98949379578401, -122.06277128548504);
+  console.log(`Center Grid Cell: ${centerGrid.i}, ${centerGrid.j}`);
+
+  // Attempt to use CellFactory if it's part of your planned pattern
+  const centerCell = CellFactory.getCell(
+    36.98949379578401,
+    -122.06277128548504,
+  );
+  console.log(`Obtained cell for center location: `, centerCell);
+
+  // create map reference centered at Oakes College
   const map = leaflet.map(document.getElementById("map")!, {
-    center: OAKES_CLASSROOM,
+    center: leaflet.latLng(36.98949379578401, -122.06277128548504),
     zoom: GAMEPLAY_ZOOM_LEVEL,
     minZoom: GAMEPLAY_ZOOM_LEVEL,
     maxZoom: GAMEPLAY_ZOOM_LEVEL,
@@ -27,16 +62,14 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // add tile layer to the map
-  leaflet
-    .tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
-      attribution:
-        '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    })
-    .addTo(map);
+  leaflet.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution:
+      '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(map);
 
   // add a player marker to the map
-  const playerMarker = leaflet.marker(OAKES_CLASSROOM);
+  const playerMarker = leaflet.marker(map.getCenter());
   playerMarker.bindTooltip("That's you!");
   playerMarker.addTo(map);
 
@@ -46,9 +79,11 @@ document.addEventListener("DOMContentLoaded", () => {
   const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
   statusPanel.innerHTML = "No points yet...";
 
+  let coinSerial = 0; // tracking serial for unique coin ids
+
   // function to spawn caches on the map
   function spawnCache(i: number, j: number) {
-    const origin = OAKES_CLASSROOM;
+    const origin = map.getCenter();
     const bounds = leaflet.latLngBounds([
       [origin.lat + i * TILE_DEGREES, origin.lng + j * TILE_DEGREES],
       [
@@ -63,18 +98,21 @@ document.addEventListener("DOMContentLoaded", () => {
     // random point value and coin count
     let pointValue = Math.floor(luck([i, j, "initialValue"].toString()) * 100);
     let cacheCoins = 0;
+    // note the unique ID for each coin based on spawning cache
+    const coinId = `${i}:${j}#${coinSerial++}`;
 
     rect.bindPopup(() => {
       const popupDiv = document.createElement("div");
       popupDiv.innerHTML = `
-                  <div>Cache at "${i},${j}". Value: <span id="value">${pointValue}</span>. Coins: <span id="cacheCoins">${cacheCoins}</span></div>
-                  <button id="collect">Collect Coin</button>
-                  <button id="deposit">Deposit Coin</button>`;
+        <div>Coin ID: ${coinId}</div>
+        <div>Cache at "${i},${j}". Value: <span id="value">${pointValue}</span>. Coins: <span id="cacheCoins">${cacheCoins}</span></div>
+        <button id="collect">Collect Coin</button>
+        <button id="deposit">Deposit Coin</button>`;
 
       // button click to collect coin
-      popupDiv
-        .querySelector<HTMLButtonElement>("#collect")!
-        .addEventListener("click", () => {
+      popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
+        "click",
+        () => {
           if (pointValue > 0) {
             pointValue--;
             popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
@@ -84,12 +122,13 @@ document.addEventListener("DOMContentLoaded", () => {
             statusPanel.innerHTML =
               `${playerPoints} points accumulated | ${playerCoins} coins collected`;
           }
-        });
+        },
+      );
 
       // button click to deposit coin
-      popupDiv
-        .querySelector<HTMLButtonElement>("#deposit")!
-        .addEventListener("click", () => {
+      popupDiv.querySelector<HTMLButtonElement>("#deposit")!.addEventListener(
+        "click",
+        () => {
           if (playerCoins > 0) {
             playerCoins--;
             cacheCoins++;
@@ -98,7 +137,8 @@ document.addEventListener("DOMContentLoaded", () => {
             statusPanel.innerHTML =
               `${playerPoints} points accumulated | ${playerCoins} coins collected`;
           }
-        });
+        },
+      );
 
       return popupDiv;
     });

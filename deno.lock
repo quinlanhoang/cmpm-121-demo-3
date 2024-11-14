@@ -6,7 +6,8 @@
     "npm:leaflet@^1.9.4": "1.9.4",
     "npm:lint-staged@*": "15.2.10",
     "npm:murmur-32@1": "1.0.0",
-    "npm:vite@*": "5.4.8"
+    "npm:vite@*": "5.4.8",
+    "npm:vite@5.4.8": "5.4.8"
   },
   "npm": {
     "@esbuild/aix-ppc64@0.21.5": {
