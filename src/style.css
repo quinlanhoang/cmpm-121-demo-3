@@ -1,4 +1,4 @@
-root {
+:root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
@@ -31,21 +31,28 @@ body {
 }
 
 h1 {
-  font-size: 3.2em;
+  font-size: 2em;
   line-height: 1.1;
+  text-align: center;
+  margin: 0.5em 0;
 }
 
 #controlPanel {
   padding: 1rem;
+  text-align: center;
+  border-bottom: none;
 }
 
 #statusPanel {
   padding: 1rem;
+  text-align: center;
+  background-color: #1e1e1e;
+  color: #ffffff;
 }
 
 #map {
   width: 100%;
-  height: 80vh;
+  height: 70vh;
 }
 
 button {
@@ -58,6 +65,7 @@ button {
   background-color: #ffaa1d;
   cursor: pointer;
   transition: border-color 0.25s;
+  margin: 0 0.3em;
 }
 
 button:hover {
