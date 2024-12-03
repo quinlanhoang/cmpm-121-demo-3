@@ -27,7 +27,6 @@ class Board {
     public readonly tileVisibilityRadius: number,
   ) {}
 
-  // retrieves or creates a unique cell instance
   private getCanonicalCell(cell: Cell): Cell {
     const key = `${cell.i},${cell.j}`;
     if (!this.knownCells.has(key)) {
@@ -36,12 +35,10 @@ class Board {
     return this.knownCells.get(key)!;
   }
 
-  // gets the cell corresponding to a given point
   getCellForPoint(point: leaflet.LatLng): Cell {
     return this.getCanonicalCell(toGridCell(point.lat, point.lng));
   }
 
-  // retrieves the bounding box for a cell
   getCellBounds(cell: Cell): leaflet.LatLngBounds {
     return leaflet.latLngBounds(
       [cell.i / 1e4, cell.j / 1e4],
@@ -49,7 +46,6 @@ class Board {
     );
   }
 
-  // gathers all cells within the player's viewing radius
   getCellsNearPoint(point: leaflet.LatLng): Cell[] {
     const originCell = this.getCellForPoint(point);
     const cells: Cell[] = [];
@@ -72,7 +68,7 @@ class Board {
   }
 }
 
-// cache class using the memento pattern for state management
+// cache class using the Memento pattern for state management
 interface Memento<T> {
   toMemento(): T;
   fromMemento(memento: T): void;
@@ -81,14 +77,12 @@ interface Memento<T> {
 class Cache implements Memento<string> {
   pointValue: number;
   cacheCoins: number;
-  marker: leaflet.Rectangle | null = null;
 
   constructor(public i: number, public j: number) {
     this.pointValue = Math.floor(luck([i, j, "initialValue"].toString()) * 100);
     this.cacheCoins = 0;
   }
 
-  // saves cache state to a string
   toMemento(): string {
     return JSON.stringify({
       pointValue: this.pointValue,
@@ -96,7 +90,6 @@ class Cache implements Memento<string> {
     });
   }
 
-  // restores cache state from a string
   fromMemento(memento: string): void {
     const state = JSON.parse(memento);
     this.pointValue = state.pointValue;
@@ -104,7 +97,90 @@ class Cache implements Memento<string> {
   }
 }
 
-// facade for geolocation
+// cacheRenderer class to handle map-based rendering for caches
+class CacheRenderer {
+  private rectangle: leaflet.Rectangle | null = null;
+
+  constructor(
+    private readonly map: leaflet.Map,
+    private readonly cache: Cache,
+    private readonly board: Board,
+  ) {}
+
+  drawCache() {
+    if (!this.rectangle) {
+      const bounds = this.board.getCellBounds({
+        i: this.cache.i,
+        j: this.cache.j,
+      });
+      this.rectangle = leaflet.rectangle(bounds).addTo(this.map).bindPopup(() =>
+        this.createCachePopup()
+      );
+    }
+  }
+
+  removeCacheMarker() {
+    if (this.rectangle) {
+      this.map.removeLayer(this.rectangle);
+      this.rectangle = null;
+    }
+  }
+
+  private createCachePopup() {
+    const popupDiv = document.createElement("div");
+    const coinId = `${this.cache.i}:${this.cache.j}#${
+      Math.floor(Math.random() * 1000)
+    }`;
+
+    popupDiv.innerHTML = `
+      <div>Coin ID: <a href="#" onclick="return false;">${coinId}</a></div>
+      <div>Cache at "${this.cache.i},${this.cache.j}". Value: <span id="value">${this.cache.pointValue}</span>. Coins: <span id="cacheCoins">${this.cache.cacheCoins}</span></div>
+      <button id="collect">Collect Coin</button>
+      <button id="deposit">Deposit Coin</button>`;
+
+    popupDiv.querySelector<HTMLAnchorElement>("a")!.addEventListener(
+      "click",
+      () => {
+        const [i, j] = coinId.split("#")[0].split(":").map(Number);
+        const targetPosition = leaflet.latLng(i / 1e4, j / 1e4);
+        this.map.setView(targetPosition, GAMEPLAY_ZOOM_LEVEL);
+      },
+    );
+
+    popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
+      "click",
+      () => {
+        if (this.cache.pointValue > 0) {
+          this.cache.pointValue--;
+          playerCoins++;
+          coinsAvailableForDeposit++;
+          updateStatusPanel();
+          popupDiv.querySelector<HTMLSpanElement>("#value")!.innerText = this
+            .cache.pointValue.toString();
+          saveGameState();
+        }
+      },
+    );
+
+    popupDiv.querySelector<HTMLButtonElement>("#deposit")!.addEventListener(
+      "click",
+      () => {
+        if (coinsAvailableForDeposit > 0) {
+          coinsAvailableForDeposit--;
+          this.cache.cacheCoins++;
+          updateStatusPanel();
+          popupDiv.querySelector<HTMLSpanElement>("#cacheCoins")!.innerText =
+            this.cache.cacheCoins.toString();
+          saveGameState();
+        }
+      },
+    );
+
+    return popupDiv;
+  }
+}
+
+// GeolocationFacade for managing geolocation services
 class GeolocationFacade {
   tracking: boolean = false;
   watchId: number | null = null;
@@ -124,13 +200,13 @@ class GeolocationFacade {
   }
 }
 
-// game parameters
+// constants
 const GAMEPLAY_ZOOM_LEVEL = 19;
 const TILE_DEGREES = 1e-4;
 const NEIGHBORHOOD_SIZE = 8;
 const CACHE_SPAWN_PROBABILITY = 0.1;
 
-// board and game state variables
+// game state variables
 const board = new Board(TILE_DEGREES, NEIGHBORHOOD_SIZE);
 let map: leaflet.Map;
 let playerMarker: leaflet.Marker<leaflet.LatLng>;
@@ -138,20 +214,27 @@ let playerPolyline: leaflet.Polyline;
 let playerPosition = leaflet.latLng(36.98949379578401, -122.06277128548504);
 const playerPath: leaflet.LatLng[] = [];
 const cacheStates = new Map<string, Cache>();
+const cacheRenderers = new Map<string, CacheRenderer>();
 let visitedCells = new Set<string>();
 let playerCoins = 0;
 let coinsAvailableForDeposit = 0;
 const geolocationFacade = new GeolocationFacade();
 
-// initializes the map and player controls once the DOM is loaded
 document.addEventListener("DOMContentLoaded", () => {
-  loadGameState(); // Load the saved state
+  loadGameState();
   initializeMap();
   setupPlayerMovement();
   updateStatusPanel();
+  document.getElementById("sensor")!.addEventListener(
+    "click",
+    () => toggleGeolocation(),
+  );
+  document.getElementById("reset")!.addEventListener(
+    "click",
+    () => resetGame(),
+  );
 });
 
-// creates and initializes the map and player marker
 function initializeMap() {
   map = leaflet.map(document.getElementById("map")!, {
     center: playerPosition,
@@ -159,51 +242,59 @@ function initializeMap() {
     minZoom: GAMEPLAY_ZOOM_LEVEL,
     maxZoom: GAMEPLAY_ZOOM_LEVEL,
     zoomControl: false,
-    scrollWheelZoom: false,
   });
 
-  leaflet.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  leaflet.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
     attribution:
-      '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>',
   }).addTo(map);
 
   playerMarker = leaflet.marker(playerPosition).addTo(map).bindTooltip(
     "That's you!",
   );
-
   playerPolyline = leaflet.polyline(playerPath, { color: "blue" }).addTo(map);
-
   repopulateCaches();
-
-  document.getElementById("sensor")!.addEventListener(
-    "click",
-    toggleGeolocation,
-  );
-  document.getElementById("reset")!.addEventListener("click", resetGame);
 }
 
-// sets up movement event listeners for the player
-function setupPlayerMovement() {
-  document.getElementById("north")!.addEventListener(
-    "click",
-    () => movePlayer(0, TILE_DEGREES),
+function repopulateCaches() {
+  const visibleCells = new Set(
+    board.getCellsNearPoint(playerPosition).map((cell) =>
+      `${cell.i}:${cell.j}`
+    ),
   );
-  document.getElementById("south")!.addEventListener(
-    "click",
-    () => movePlayer(0, -TILE_DEGREES),
-  );
-  document.getElementById("west")!.addEventListener(
-    "click",
-    () => movePlayer(-TILE_DEGREES, 0),
-  );
-  document.getElementById("east")!.addEventListener(
-    "click",
-    () => movePlayer(TILE_DEGREES, 0),
-  );
+
+  cacheRenderers.forEach((renderer, cacheKey) => {
+    if (!visibleCells.has(cacheKey)) {
+      renderer.removeCacheMarker();
+      cacheRenderers.delete(cacheKey);
+    }
+  });
+
+  visibleCells.forEach((cacheKey) => {
+    let cache = cacheStates.get(cacheKey);
+
+    const isVisited = visitedCells.has(cacheKey) ||
+      localStorage.getItem(cacheKey) != null;
+
+    if (!isVisited) {
+      visitedCells.add(cacheKey);
+
+      if (!cache && Math.random() < CACHE_SPAWN_PROBABILITY) {
+        const [i, j] = cacheKey.split(":").map(Number);
+        cache = new Cache(i, j);
+        cacheStates.set(cacheKey, cache);
+      }
+    }
+
+    if (cache && !cacheRenderers.has(cacheKey)) {
+      const renderer = new CacheRenderer(map, cache, board);
+      renderer.drawCache();
+      cacheRenderers.set(cacheKey, renderer);
+    }
+  });
 }
 
-// persists game state to local storage
 function saveGameState() {
   localStorage.setItem("playerPosition", JSON.stringify(playerPosition));
   localStorage.setItem("playerCoins", playerCoins.toString());
@@ -229,7 +320,6 @@ function saveGameState() {
   );
 }
 
-// loads game state from local storage
 function loadGameState() {
   const loadedPosition = localStorage.getItem("playerPosition");
   if (loadedPosition) {
@@ -277,117 +367,31 @@ function loadGameState() {
   }
 }
 
-// populates caches in the visible cells with respect to previously visited or stored cells
-function repopulateCaches() {
-  const visibleCells = new Set(
-    board.getCellsNearPoint(playerPosition).map((cell) =>
-      `${cell.i}:${cell.j}`
-    ),
-  );
-
-  // removes markers for caches no longer in view
-  cacheStates.forEach((cache, cacheKey) => {
-    if (!visibleCells.has(cacheKey) && cache.marker) {
-      map.removeLayer(cache.marker);
-      cache.marker = null;
-    }
-  });
-
-  // assess and populate caches
-  visibleCells.forEach((cacheKey) => {
-    let cache = cacheStates.get(cacheKey);
-
-    // checks if the cell has been visited or already has a cache stored
-    const isVisited = visitedCells.has(cacheKey) ||
-      localStorage.getItem(cacheKey) != null;
-
-    if (!isVisited) {
-      // mark cell as visited (only do this once per cell)
-      visitedCells.add(cacheKey);
-
-      // only allow new caches if the cell is unvisited
-      if (!cache && Math.random() < CACHE_SPAWN_PROBABILITY) {
-        const [i, j] = cacheKey.split(":").map(Number);
-        cache = new Cache(i, j);
-        cacheStates.set(cacheKey, cache);
-      }
-    }
-
-    // if a cache exists but is not drawn, draw it
-    if (cache && !cache.marker) {
-      drawCache(cache);
-    }
-  });
-}
-
-// draws the cache on the map and sets up its interactions
-function drawCache(cache: Cache) {
-  const bounds = board.getCellBounds({ i: cache.i, j: cache.j });
-  const rect = leaflet.rectangle(bounds);
-  rect.addTo(map).bindPopup(() => createCachePopup(cache));
-  cache.marker = rect;
-}
-
-// generates the popup content and functionality for the cache
-function createCachePopup(cache: Cache) {
-  const popupDiv = document.createElement("div");
-  const coinId = `${cache.i}:${cache.j}#${Math.floor(Math.random() * 1000)}`;
-
-  popupDiv.innerHTML = `
-    <div>Coin ID: <a href="#" onclick="return false;">${coinId}</a></div>
-    <div>Cache at "${cache.i},${cache.j}". Value: <span id="value">${cache.pointValue}</span>. Coins: <span id="cacheCoins">${cache.cacheCoins}</span></div>
-    <button id="collect">Collect Coin</button>
-    <button id="deposit">Deposit Coin</button>`;
-
-  popupDiv.querySelector<HTMLAnchorElement>("a")!.addEventListener(
-    "click",
-    () => {
-      const [i, j] = coinId.split("#")[0].split(":").map(Number);
-      const targetPosition = leaflet.latLng(i / 1e4, j / 1e4);
-      map.setView(targetPosition, GAMEPLAY_ZOOM_LEVEL); // center the map on the coin's home cache
-    },
-  );
-
-  popupDiv.querySelector<HTMLButtonElement>("#collect")!.addEventListener(
-    "click",
-    () => {
-      if (cache.pointValue > 0) {
-        cache.pointValue--;
-        playerCoins++;
-        coinsAvailableForDeposit++;
-        updateStatusPanel();
-        popupDiv.querySelector<HTMLSpanElement>("#value")!.innerText = cache
-          .pointValue.toString();
-        saveGameState();
-      }
-    },
-  );
-
-  popupDiv.querySelector<HTMLButtonElement>("#deposit")!.addEventListener(
-    "click",
-    () => {
-      if (coinsAvailableForDeposit > 0) {
-        coinsAvailableForDeposit--;
-        cache.cacheCoins++;
-        updateStatusPanel();
-        popupDiv.querySelector<HTMLSpanElement>("#cacheCoins")!.innerText =
-          cache.cacheCoins.toString();
-        saveGameState();
-      }
-    },
-  );
-
-  return popupDiv;
-}
-
-// updates the status panel with player's current coin stats
 function updateStatusPanel() {
   const statusPanel = document.getElementById("statusPanel")!;
   statusPanel.innerHTML =
     `Total coins collected: ${playerCoins}, Coins available for deposit: ${coinsAvailableForDeposit}`;
 }
 
-// handles the movement of the player and view updates
+function setupPlayerMovement() {
+  document.getElementById("north")!.addEventListener(
+    "click",
+    () => movePlayer(0, TILE_DEGREES),
+  );
+  document.getElementById("south")!.addEventListener(
+    "click",
+    () => movePlayer(0, -TILE_DEGREES),
+  );
+  document.getElementById("west")!.addEventListener(
+    "click",
+    () => movePlayer(-TILE_DEGREES, 0),
+  );
+  document.getElementById("east")!.addEventListener(
+    "click",
+    () => movePlayer(TILE_DEGREES, 0),
+  );
+}
+
 function movePlayer(dx: number, dy: number) {
   playerPosition = leaflet.latLng(
     playerPosition.lat + dy,
@@ -396,15 +400,13 @@ function movePlayer(dx: number, dy: number) {
   playerMarker.setLatLng(playerPosition);
   map.panTo(playerPosition);
 
-  playerPath.push(playerPosition); // record player movement
+  playerPath.push(playerPosition);
   playerPolyline.setLatLngs(playerPath);
 
   repopulateCaches();
-
-  saveGameState(); // save game state after movement
+  saveGameState();
 }
 
-// toggles geolocation tracking
 function toggleGeolocation() {
   if (!geolocationFacade.tracking) {
     geolocationFacade.startTracking((position) => {
@@ -415,27 +417,26 @@ function toggleGeolocation() {
       playerMarker.setLatLng(playerPosition);
       map.panTo(playerPosition);
 
-      playerPath.push(playerPosition); // record geolocation movement
+      playerPath.push(playerPosition);
       playerPolyline.setLatLngs(playerPath);
 
       repopulateCaches();
       saveGameState();
     });
     alert("Geolocation tracking started.");
+  } else {
+    geolocationFacade.stopTracking();
+    alert("Geolocation tracking stopped.");
   }
 }
 
-// resets the game state with confirmation
 function resetGame() {
   const confirmation = globalThis.confirm(
     "Are you sure you want to reset the game state? This will erase all your progress.",
   );
   if (confirmation) {
-    // stop geolocation during reset
     geolocationFacade.stopTracking();
-    // clear local storage to reset game state
     localStorage.clear();
-    // refresh the page to reinitialize to the default state
     globalThis.location.reload();
   }
 }
