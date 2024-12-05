@@ -440,3 +440,4 @@ function resetGame() {
     globalThis.location.reload();
   }
 }
+//
